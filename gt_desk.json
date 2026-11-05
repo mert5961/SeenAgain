@@ -1,0 +1,13 @@
+{
+  "_note": "Ground truth from Mert, 2026-11-05. Asset ids were matched to objects by looking at the contact sheets.",
+  "A2": {"changes": {}},
+  "B": {
+    "changes": {
+      "A-012": {"what": "chair (back)", "truth": "rotated in place"},
+      "A-005": {"what": "glass by the mug", "truth": "moved ~10 cm"},
+      "A-011": {"what": "glass by the lamp", "truth": "moved ~10 cm"},
+      "A-017": {"what": "PS controller", "truth": "moved ~10 cm"},
+      "eyeglasses": {"what": "eyeglasses on the couch", "truth": "moved ~10 cm", "not_in_register": true}
+    }
+  }
+}
