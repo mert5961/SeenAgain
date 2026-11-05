@@ -1,0 +1,6 @@
+.venv/
+data/
+checkpoints/
+work/
+*.mp4
+*.mov
