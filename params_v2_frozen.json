@@ -1,0 +1,15 @@
+{
+  "r_static": 0.06,
+  "sim_static": 0.55,
+  "sim_moved": 0.72,
+  "ambiguity": 0.03,
+  "in_frame": 0.7,
+  "unoccluded": 0.6,
+  "depth_tol": 0.08,
+  "verdict": 0.6,
+  "min_clear": 3,
+  "size_frac": 0.25,
+  "small_band": 1.5,
+  "in_place": true,
+  "_note": "v2 frozen 2026-11-05 after round B (post-hoc rules: size-aware radius, small-move band, in-place pairing); to be validated on a fresh round C"
+}

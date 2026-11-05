@@ -27,7 +27,13 @@ DEFAULTS = dict(
     depth_tol=0.08,    # relative depth band for "surface still there"
     verdict=0.6,       # share of points that must agree on empty / occupied
     min_clear=3,       # frames with a clear view needed for any verdict
+    # v2 (written after round B, see README "What round B taught us")
+    size_frac=0.0,     # static radius grows with object size: max(r_static*scale, size_frac*extent)
+    small_band=1.0,    # moves below small_band * radius go to a person, not "moved"
+    in_place=False,    # pair a "removed" and a new object in the same 3D spot -> "changed in place"
 )
+
+V2 = dict(size_frac=0.25, small_band=1.5, in_place=True)
 
 
 def load_objs(sd, walk):
@@ -80,9 +86,13 @@ def main():
     ap.add_argument("--base", default="A")
     ap.add_argument("--round", required=True)
     ap.add_argument("--params", help="json with threshold overrides (fixed before the test round)")
+    ap.add_argument("--v2", action="store_true", help="turn on the three rules added after round B")
     ap.add_argument("--metres-per-unit", type=float, help="from one tape measurement (see scale.py)")
     a = ap.parse_args()
     prm = dict(DEFAULTS, **(load_json(a.params) if a.params else {}))
+    prm.pop("_note", None)
+    if a.v2:
+        prm.update(V2)
 
     sd = scene_dir(a.scene)
     cams = load_cameras(sd)
@@ -107,7 +117,8 @@ def main():
     if oa and ob:
         dist = np.linalg.norm(np.stack([o["c"] for o in oa])[:, None] - np.stack([o["c"] for o in ob])[None], axis=2)
         sim = np.stack([o["e"] for o in oa]) @ np.stack([o["e"] for o in ob]).T
-        r = prm["r_static"] * scale
+        size = np.array([max(o["extent"]) for o in oa])
+        r = np.maximum(prm["r_static"] * scale, prm["size_frac"] * size)[:, None]
         gate = (dist < r) & (sim > prm["sim_static"])
         cost = np.where(gate, dist / r + (1 - sim) / (1 - prm["sim_static"]), 1e6)
         for i, j in zip(*linear_sum_assignment(cost)):
@@ -128,11 +139,14 @@ def main():
                 i, j = la[ii], lb[jj]
                 rivals = sorted(s2[ii], reverse=True) + sorted(s2[:, jj], reverse=True)
                 close = [s for s in rivals if s > prm["sim_moved"] and abs(s - s2[ii, jj]) < prm["ambiguity"]]
-                state = "review" if len(close) > 2 else "moved"  # itself appears twice in rivals
+                ambiguous = len(close) > 2  # itself appears twice in rivals
+                small = dist[i, j] < prm["small_band"] * r[i, 0]
+                state = "review" if ambiguous or small else "moved"
                 used_a.add(i), used_b.add(j)
                 rows.append(dict(asset=oa[i]["id"], state=state, matched=ob[j]["id"],
                                  moved_by=unit(dist[i, j]), similarity=round(float(s2[ii, jj]), 3),
-                                 why="ambiguous: another candidate looks the same" if state == "review" else
+                                 why="ambiguous: another candidate looks the same" if ambiguous else
+                                 "possible small move, inside the noise band" if small else
                                  "same fingerprint, new position"))
 
     # leftovers: check the spot in 3D with the other round's views
@@ -155,14 +169,33 @@ def main():
                               "review": f"new object, but the baseline spot looks {v}",
                               "added_unverified": "baseline never saw this spot clearly"}[state]))
 
-    order = ["removed", "moved", "added", "review", "not_seen", "added_unverified", "unchanged"]
+    if prm["in_place"]:
+        # a "removed" asset and a new object occupying the same 3D spot: the thing turned or changed shape
+        news = [x for x in rows if x.get("new") and x["state"] in ("added", "review", "added_unverified")]
+        nb = {o["id"]: o for o in ob}
+        for x in [x for x in rows if x["state"] == "removed"]:
+            o = oa[[k["id"] for k in oa].index(x["asset"])]
+            best, bd = None, None
+            for y in news:
+                q = nb[y["new"]]
+                d = np.linalg.norm(o["c"] - q["c"])
+                if d < 0.5 * (max(o["extent"]) + max(q["extent"])) and (bd is None or d < bd):
+                    best, bd = y, d
+            if best:
+                news.remove(best)
+                rows.remove(best)
+                x.update(state="in_place", matched=best["new"], moved_by=unit(bd),
+                         why="spot of the old view is empty, a new shape overlaps it: turned / reshaped")
+
+    order = ["removed", "moved", "in_place", "added", "review", "not_seen", "added_unverified", "unchanged"]
     rows.sort(key=lambda r: (order.index(r["state"]), r.get("asset") or r.get("new")))
     counts = {s: sum(r["state"] == s for r in rows) for s in order}
     rec = dict(base=a.base, round=a.round, units="m" if mpu else "scene units", params=prm,
                counts=counts, rows=rows)
-    save_json(sd / f"receipt_{a.base}_{a.round}.json", rec)
+    tag = "_v2" if a.v2 else ""
+    save_json(sd / f"receipt_{a.base}_{a.round}{tag}.json", rec)
 
-    label = {"unchanged": "confirmed unchanged", "moved": "CHANGED: moved", "removed": "CHANGED: removed",
+    label = {"in_place": "CHANGED: in place (turned / reshaped)", "unchanged": "confirmed unchanged", "moved": "CHANGED: moved", "removed": "CHANGED: removed",
              "added": "CHANGED: added (proposed row)", "review": "to a person", "not_seen": "not seen clearly",
              "added_unverified": "new, baseline spot not seen"}
     md = [f"# Receipt: round {a.round} vs baseline {a.base}", "",
@@ -174,7 +207,7 @@ def main():
             ev = f"similarity {r['similarity']}"
         md.append(f"| {r.get('asset') or '—'} | {label[r['state']]} | {r.get('matched') or r.get('new') or ''} "
                   f"| {r.get('moved_by', '')} | {ev} |")
-    (sd / f"receipt_{a.base}_{a.round}.md").write_text("\n".join(md) + "\n")
+    (sd / f"receipt_{a.base}_{a.round}{tag}.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))
 
 
