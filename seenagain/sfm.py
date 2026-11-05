@@ -40,29 +40,33 @@ def main():
     ap.add_argument("--scene", required=True)
     ap.add_argument("--overlap", type=int, default=8)
     ap.add_argument("--cross-stride", type=int, default=4)
+    ap.add_argument("--mapper", choices=["global", "incremental"], default="global",
+                    help="global (GLOMAP) placed 150/150 frames on the desk scene; incremental split it into 15 pieces")
+    ap.add_argument("--reuse-matches", action="store_true", help="keep db.db, only redo mapping")
     a = ap.parse_args()
     sd = scene_dir(a.scene)
     img_dir = sd / "images"
     names = sorted(p.name for p in img_dir.glob("*.jpg"))
 
-    for p in ["db.db", "sparse", "undist"]:
+    for p in (["sparse", "undist"] if a.reuse_matches else ["db.db", "sparse", "undist"]):
         q = sd / p
         if q.is_dir():
             shutil.rmtree(q)
         elif q.exists():
             q.unlink()
 
-    pycolmap.extract_features(sd / "db.db", img_dir, camera_mode=pycolmap.CameraMode.SINGLE)
-
     pairs, by_walk = make_pairs(names, a.overlap, a.cross_stride)
-    (sd / "pairs.txt").write_text("".join(f"{x} {y}\n" for x, y in pairs))
-    print(f"{len(names)} images, {len(pairs)} pairs")
-    po = pycolmap.ImportedPairingOptions()
-    po.match_list_path = sd / "pairs.txt"
-    pycolmap.match_image_pairs(sd / "db.db", pairing_options=po)
+    if not a.reuse_matches:
+        pycolmap.extract_features(sd / "db.db", img_dir, camera_mode=pycolmap.CameraMode.SINGLE)
+        (sd / "pairs.txt").write_text("".join(f"{x} {y}\n" for x, y in pairs))
+        print(f"{len(names)} images, {len(pairs)} pairs")
+        po = pycolmap.ImportedPairingOptions()
+        po.match_list_path = sd / "pairs.txt"
+        pycolmap.match_image_pairs(sd / "db.db", pairing_options=po)
 
     (sd / "sparse").mkdir()
-    recs = pycolmap.incremental_mapping(sd / "db.db", img_dir, sd / "sparse")
+    mapping = pycolmap.global_mapping if a.mapper == "global" else pycolmap.incremental_mapping
+    recs = mapping(sd / "db.db", img_dir, sd / "sparse")
     best_i = max(recs, key=lambda i: recs[i].num_reg_images())
     rec = recs[best_i]
     print(f"{len(recs)} model(s); using #{best_i}: {rec.summary()}")

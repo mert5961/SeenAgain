@@ -1,0 +1,12 @@
+{
+  "r_static": 0.06,
+  "sim_static": 0.55,
+  "sim_moved": 0.72,
+  "ambiguity": 0.03,
+  "in_frame": 0.7,
+  "unoccluded": 0.6,
+  "depth_tol": 0.08,
+  "verdict": 0.6,
+  "min_clear": 3,
+  "_note": "frozen 2026-11-05 after control A vs A2 (0 false changes), before looking at round B"
+}
