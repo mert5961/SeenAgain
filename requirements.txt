@@ -7,3 +7,6 @@ scipy==1.18.1
 pillow==13.0.0
 tqdm==4.70.1
 git+https://github.com/facebookresearch/sam2.git
+transformers==5.22.1
+matplotlib==3.11.2
+pytest==9.2.0
